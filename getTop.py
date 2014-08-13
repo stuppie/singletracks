@@ -10,11 +10,13 @@ import urllib
 import pandas as pd
 from pandas import Series
 import numpy as np
+import string
+import re
 
 def getNewTop100():
     # Get the current top 100 trails from singletracks.com. 
-    # Returns a pandas dataframe containing rank (#), trail name (Trail),
-    # city (Location), URL, Lat and Lng initialized to zero
+    # Returns a list of dicts containing rank (#), trail name (Trail),
+    # city (Location), URL
 
     link = "http://www.singletracks.com/mountain-bike/best_trails.php"
     f = urllib.request.urlopen(link)
@@ -28,11 +30,10 @@ def getNewTop100():
     # read in html table as df
     top = pd.read_html(str(table),infer_types=False)[0]
     top['URL']=links
+    top['#']=top['#'].astype(int)
     del top['Difficulty']
     del top['Rating']
-  
-    top['Lat'] = Series(np.zeros(len(top['URL'])))
-    top['Lng'] = Series(np.zeros(len(top['URL'])))
+    top = top.to_dict("records") # to a list of dicts
     
     return top
 
@@ -41,51 +42,46 @@ def updateDB(coll, top):
     # and then add to DB.
     # If already in DB, update ranking
     import json
-    for rowIdx, trailURL in top['URL'].T.iteritems():
-        
+    for trail in top:
         # set the rank of the trail that used to be # top['#'][rowIdx] to NaN
-        coll.update({'#':int(top['#'][rowIdx])},{"$set": {"#":"NaN"}})
+        coll.update({'#':trail['#']},{"$set": {"#":"NaN"}})
         
-        if coll.find({'URL':trailURL}).count() == 0: #not in db
-            #get lat & lng
-            print('Adding: ' + top['Trail'][rowIdx])
-            trail = getTrailInfo(trailURL)
-            top['Lat'][rowIdx]=trail['Lat']
-            top['Lng'][rowIdx]=trail['Lng']
-            
+        if coll.find({'URL':trail['URL']}).count() == 0: #not in db
+            #get detailed stats
+            print('Adding: ' + trail['Trail'])
+            trail = getTrailInfo(trail)
             # insert new trail
-            trail = json.loads(top.loc[rowIdx].to_json())
-            trail['#']=int(trail['#'])
             coll.update({'URL':trail['URL']}, trail, upsert = True)
         else:
-            print('Already in DB: ' + top['Trail'][rowIdx])
-            trail = json.loads(top.loc[rowIdx].to_json())
-            trail['#']=int(trail['#'])
-            #update ranking
+            print('Already in DB: ' + trail['Trail'])
+            #update ranking only
             coll.update({'URL':trail['URL']}, {"$set": {"#":trail['#']}})
 
-def getTrailInfo(url):
+def getTrailInfo(trail):
     # url = list(coll.find({'#':1}))[0]['URL']
-    import re
-    import urllib
-    trail = dict()    
-    f = urllib.request.urlopen(url)
-    trailHTML = str(f.read())
-    
-    (trail['Lat'], trail['Lng']) = getLatLng(trailHTML)
-    trail['html'] = trailHTML
-    
-    return trail
-    
+    f = urllib.request.urlopen(trail['URL'])
 
-def getLatLng(trailHTML):
-    latlng = re.findall("google.maps.LatLng\(\S\S(-?\d+[.]\d+)\S\S[,]\s\S{2}(-?\d+[.]\d+)",trailHTML)
+    trail['html'] = str(f.read())
+
+    soup = BeautifulSoup(trail['html'])
+    stat = soup.findAll('div',attrs={"class":"\\\'st_stat1\\\'"})
+    trail['distance'] = int(stat[0].getText().strip(string.ascii_letters))
+    try:
+        trail['ascent'], trail['descent']=[int(x.replace(',','')) for x in re.findall("[-,0-9]+",stat[3].getText())]
+    except:
+        trail['ascent'], trail['descent'] = [0, 0]
+    trail['rating'] = float(soup.find('span',attrs={"class":"\\\'average\\\'"}).getText())
+    stat = soup.findAll('div',attrs={"class":"span8"})[2].findAll("div")[0]
+    trail['picURL'] = re.findall("(http://\S*.jpg)", str(stat))[0]
+
+    latlng = re.findall("google.maps.LatLng\(\S\S(-?\d+[.]\d+)\S\S[,]\s\S{2}(-?\d+[.]\d+)",trail['html'])
     try:    
         latlng = [float(x) for x in latlng[0]]
     except:
         latlng = [0.,0.]
     
-    return latlng
+    (trail['Lat'], trail['Lng']) = latlng
+    return trail
     
     #trailHTML[83832:83832+50]
     #"google.maps.LatLng(\\'39.400500\\', \\'-105.167880\\')"
