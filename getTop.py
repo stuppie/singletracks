@@ -12,6 +12,8 @@ from pandas import Series
 import numpy as np
 import string
 import re
+import os
+import json
 
 def getNewTop100():
     # Get the current top 100 trails from singletracks.com. 
@@ -41,7 +43,6 @@ def updateDB(coll, top):
     # Determine which trails are not in the database (we need to get latlng for)
     # and then add to DB.
     # If already in DB, update ranking
-    import json
     for trail in top:
         # set the rank of the trail that used to be # top['#'][rowIdx] to NaN
         coll.update({'#':trail['#']},{"$set": {"#":"NaN"}})
@@ -158,7 +159,7 @@ if __name__ == "__main__":
     
     dirPath = r'C:\Users\Greg\Documents\stuppie.com'
     with open(dirPath + os.path.sep + "markers.js", "w") as text_file:
-        print("var markers = " + dumps(list(coll.find({'#':{'$lte':100}},{'html':0, "_id":0}).sort('#',1))), file = text_file)
+        print("var markers = " + json.dumps(list(coll.find({'#':{'$lte':100}},{'html':0, "_id":0}).sort('#',1))), file = text_file)
     
     updateLastUpdated(dirPath + os.path.sep + 'map.html')
     uploadChanges(dirPath)
